@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Article vers Drive</title>
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#000000">
+  <style>
+    :root {
+      --bg: #000000;
+      --fg: #FFFFFF;
+      --accent: #FFD700;
+      --success: #4CAF50;
+      --error: #FF5252;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 20px;
+      background-color: var(--bg);
+      color: var(--fg);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 1.4rem;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    h1 {
+      color: var(--accent);
+      font-size: 1.8rem;
+      margin-top: 0;
+    }
+    .status-box {
+      border: 3px solid var(--accent);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+      background: #111111;
+      font-weight: bold;
+      min-height: 120px;
+    }
+    button {
+      width: 100%;
+      min-height: 75px;
+      margin-bottom: 16px;
+      padding: 16px;
+      font-size: 1.4rem;
+      font-weight: bold;
+      color: #000000;
+      background-color: var(--accent);
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    button:focus, input:focus {
+      outline: 4px solid #FFFFFF;
+      outline-offset: 2px;
+    }
+    .secondary-btn {
+      background-color: #333333;
+      color: #FFFFFF;
+      border: 2px solid var(--fg);
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+      color: var(--accent);
+    }
+    input[type="url"] {
+      width: 100%;
+      padding: 16px;
+      font-size: 1.2rem;
+      border: 2px solid var(--fg);
+      border-radius: 8px;
+      background: #222222;
+      color: #FFFFFF;
+      margin-bottom: 16px;
+    }
+    details {
+      margin-top: auto;
+      border-top: 2px solid #444;
+      padding-top: 16px;
+    }
+    summary {
+      font-weight: bold;
+      color: var(--accent);
+      cursor: pointer;
+      padding: 10px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <main>
+    <h1>Article vers Drive</h1>
+
+    <!-- Zone d'annonce automatique pour TalkBack ET synthèse vocale intégrée -->
+    <div id="status" class="status-box" role="status" aria-live="assertive" aria-atomic="true">
+      Prêt. Partagez un article depuis votre navigateur vers cette application pour le sauvegarder automatiquement dans Google Drive.
+    </div>
+
+    <!-- Formulaire manuel ou confirmation -->
+    <section aria-label="Actions rapides">
+      <label for="manualUrl">Lien de l'article (rempli automatiquement lors d'un partage) :</label>
+      <input type="url" id="manualUrl" placeholder="https://...">
+      
+      <button id="saveBtn" type="button">Sauvegarder l'article maintenant</button>
+      <button id="voiceBtn" type="button" class="secondary-btn">Commande vocale (Dire « Sauvegarder »)</button>
+    </section>
+
+    <!-- Configuration de l'URL du script Google Apps Script -->
+    <details id="settingsPanel">
+      <summary>Configuration (URL du script Google Drive)</summary>
+      <div style="margin-top: 12px;">
+        <label for="scriptUrlInput">URL de déploiement Google Apps Script :</label>
+        <input type="url" id="scriptUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
+        <label style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+          <input type="checkbox" id="autoSaveToggle" checked style="width:28px; height:28px;">
+          Envoi 100 % automatique dès le partage (sans confirmation)
+        </label>
+        <button id="saveSettingsBtn" type="button" class="secondary-btn">Enregistrer la configuration</button>
+      </div>
+    </details>
+  </main>
+
+  <script>
+    // Enregistrement du Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js');
+    }
+
+    // URL de votre Google Apps Script (peut être codée en dur ici pour vos amis !)
+    const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzVXDzkDNBnZNj2BHJJrP0-CuOS6U01zlwxRFKpsQBtzMTdJ60AWxlxfww6Adz7x9yD/exec";
+
+    const statusEl = document.getElementById('status');
+    const manualUrlInput = document.getElementById('manualUrl');
+    const saveBtn = document.getElementById('saveBtn');
+    const voiceBtn = document.getElementById('voiceBtn');
+    const scriptUrlInput = document.getElementById('scriptUrlInput');
+    const autoSaveToggle = document.getElementById('autoSaveToggle');
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    const settingsPanel = document.getElementById('settingsPanel');
+
+    // Synthèse vocale et bips sonores pour un retour immédiat
+    function announce(message, playBeepType = null) {
+      statusEl.textContent = message;
+      if (playBeepType) playTone(playBeepType);
+      
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(message);
+        utterance.lang = 'fr-FR';
+        utterance.rate = 1.05;
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+
+    // Générateur de bips sonores accessibles (Web Audio API)
+    function playTone(type) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        if (type === 'start') {
+          osc.frequency.value = 440; // La
+          gain.gain.value = 0.1;
+          osc.start();
+          osc.stop(ctx.currentTime + 0.15);
+        } else if (type === 'success') {
+          osc.frequency.setValueAtTime(523.25, ctx.currentTime); // Do
+          osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.15); // Mi
+          gain.gain.value = 0.15;
+          osc.start();
+          osc.stop(ctx.currentTime + 0.35);
+        } else if (type === 'error') {
+          osc.frequency.value = 220; // Grave
+          gain.gain.value = 0.2;
+          osc.start();
+          osc.stop(ctx.currentTime + 0.4);
+        }
+      } catch (e) {}
+    }
+
+    // Extraction d'une URL valide depuis les paramètres partagés par Android
+    function extractSharedUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const urlParam = params.get('url') || '';
+      const textParam = params.get('text') || '';
+      const titleParam = params.get('title') || '';
+
+      const combined = `${urlParam} ${textParam} ${titleParam}`;
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const matches = combined.match(urlRegex);
+      return matches ? matches[0] : '';
+    }
+
+    // Chargement des paramètres
+    function loadSettings() {
+      const savedScript = localStorage.getItem('gas_script_url') || DEFAULT_SCRIPT_URL;
+      const autoSave = localStorage.getItem('auto_save') !== 'false';
+      scriptUrlInput.value = savedScript;
+      autoSaveToggle.checked = autoSave;
+      if (!savedScript) {
+        settingsPanel.open = true;
+      }
+      return { savedScript, autoSave };
+    }
+
+    saveSettingsBtn.addEventListener('click', () => {
+      localStorage.setItem('gas_script_url', scriptUrlInput.value.trim());
+      localStorage.setItem('auto_save', autoSaveToggle.checked ? 'true' : 'false');
+      announce("Configuration enregistrée avec succès.", 'success');
+    });
+
+    // Envoi de l'article vers Google Apps Script
+    async function sendArticleToDrive(targetUrl) {
+      const scriptUrl = (localStorage.getItem('gas_script_url') || DEFAULT_SCRIPT_URL).trim();
+      if (!scriptUrl) {
+        announce("Attention : l'adresse du script Google Drive n'est pas encore configurée. Ouvrez la configuration en bas de page.", 'error');
+        settingsPanel.open = true;
+        return;
+      }
+      if (!targetUrl) {
+        announce("Aucun lien d'article détecté.", 'error');
+        return;
+      }
+
+      announce("Extraction et sauvegarde de l'article en cours, veuillez patienter...", 'start');
+
+      try {
+        // Utilisation d'une requête GET ou POST compatible CORS avec Google Apps Script
+        const fetchUrl = `${scriptUrl}?url=${encodeURIComponent(targetUrl)}`;
+        const response = await fetch(fetchUrl, { method: "GET", redirect: "follow" });
+        const data = await response.json();
+
+        if (data.status === "success") {
+          announce(`Article sauvegardé avec succès dans le dossier ${data.folderName}. Titre : ${data.title}`, 'success');
+        } else {
+          announce(`Erreur lors de la sauvegarde : ${data.message}`, 'error');
+        }
+      } catch (err) {
+        announce("Erreur réseau ou problème d'accès au script Google Drive. Vérifiez votre connexion.", 'error');
+      }
+    }
+
+    saveBtn.addEventListener('click', () => {
+      sendArticleToDrive(manualUrlInput.value.trim());
+    });
+
+    // Reconnaissance vocale intégrée (Web Speech API)
+    voiceBtn.addEventListener('click', () => {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        announce("La reconnaissance vocale n'est pas prise en charge par ce navigateur.", 'error');
+        return;
+      }
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'fr-FR';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      announce("Écoute en cours. Dites Sauvegarder ou Annuler.", 'start');
+
+      recognition.onresult = (event) => {
+        const command = event.results[0][0].transcript.toLowerCase();
+        if (command.includes('sauvegarder') || command.includes('enregistrer') || command.includes('oui') || command.includes('ok')) {
+          sendArticleToDrive(manualUrlInput.value.trim());
+        } else if (command.includes('annuler') || command.includes('non')) {
+          announce("Sauvegarde annulée.");
+        } else {
+          announce(`Commande non reconnue : ${command}. Dites Sauvegarder pour confirmer.`);
+        }
+      };
+
+      recognition.onerror = () => {
+        announce("Je n'ai pas pu entendre votre commande.", 'error');
+      };
+
+      recognition.start();
+    });
+
+    // Initialisation au lancement (détection automatique d'un partage Android)
+    window.addEventListener('DOMContentLoaded', () => {
+      const { autoSave } = loadSettings();
+      const sharedUrl = extractSharedUrl();
+
+      if (sharedUrl) {
+        manualUrlInput.value = sharedUrl;
+        if (autoSave) {
+          sendArticleToDrive(sharedUrl);
+        } else {
+          announce("Article reçu. Appuyez sur le bouton Sauvegarder ou utilisez la commande vocale.");
+        }
+      }
+    });
+  </script>
+</body>
+</html>
